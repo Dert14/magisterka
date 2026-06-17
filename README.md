@@ -253,27 +253,45 @@ Przydatne parametry startowe:
 
 ### 6. Sekwencje ruchu od dolnej pozycji
 
-`scripts/collect_motion_sequence.py` wykonuje otwarte sekwencje predkosci
-wozka i zapisuje osobny CSV dla kazdego START. Procedura: START=OFF, uruchom
-skrypt, ustaw wahadlo w pozycji poczatkowej, nacisnij START. Po sekwencji
-skrypt zatrzymuje naped i czeka na kolejne OFF -> ON dla nastepnej proby.
+`scripts/collect_motion_sequence.py` wykonuje otwarta cykliczna sekwencje
+predkosci wozka i zapisuje osobny CSV dla kazdego START. Procedura: START=OFF,
+uruchom skrypt, ustaw wahadlo w pozycji poczatkowej, nacisnij START. Po
+sekwencji skrypt zatrzymuje naped i czeka na kolejne OFF -> ON dla nastepnej
+proby.
 
-Domyslnie wykona trzy coraz mocniejsze sekwencje:
+Domyslnie jeden START wykona 3 cykle:
+`+1500 Hz przez 0.25 s`, `stop 0.40 s`, `-1500 Hz przez 0.25 s`,
+`stop 0.40 s`.
 
 ```powershell
 python scripts/collect_motion_sequence.py --port COM5
 ```
 
-Wlasne proby podaje sie jako `speed_hz:czas_s` rozdzielone przecinkami. Kazde
-`--trial` to osobny START i osobny plik CSV:
+Parametry eksperymentu:
 
 ```powershell
-python scripts/collect_motion_sequence.py --port COM5 --trial "1500:0.25,-1500:0.25,0:0.5" --trial "2500:0.20,-2500:0.20,0:0.5"
+python scripts/collect_motion_sequence.py --port COM5 --speed-hz 2000 --move-s 0.20 --stop-s 0.50 --cycles 5
 ```
 
+`--experiments 3` zbierze trzy osobne pliki CSV, po jednym na kazdy START.
+`--repeat` czeka na kolejne START bez limitu. Jesli pierwszy ruch jest w zla
+strone, uzyj `--first-direction negative`.
+
+Opcjonalnie mozna dodac gladki losowy skladnik do predkosci podczas ruchu:
+
+```powershell
+python scripts/collect_motion_sequence.py --port COM5 --speed-hz 2000 --move-s 0.20 --stop-s 0.50 --cycles 5 --noise-hz 300 --noise-period-s 0.15 --noise-alpha 0.2
+```
+
+`--noise-hz` to amplituda zaklocenia w Hz, `--noise-period-s` jak czesto
+losowany jest nowy cel szumu, a `--noise-alpha` okresla gladkosc dochodzenia do
+tego celu. Domyslnie szum nie dziala podczas postojow; `--noise-on-stop`
+wlacza go takze dla faz `stop_*`.
+
 Pliki trafiaja domyslnie do `scripts/logs_sequence/`. W CSV jest m.in.
-`trial_idx`, `segment_idx`, `segment_t_s`, `command_speed_hz`,
-`applied_speed_hz`, `theta_rad`, `position_steps` i `stop_reason`.
+`trial_idx`, `cycle_idx`, `phase`, `segment_idx`, `segment_t_s`,
+`base_speed_hz`, `noise_speed_hz`, `command_speed_hz`, `applied_speed_hz`,
+`theta_rad`, `position_steps` i `stop_reason`.
 
 ## Kryteria akceptacji - mapowanie
 

@@ -4,11 +4,11 @@
 Procedure:
   1. Start this script with START=OFF.
   2. Put the pendulum in the desired initial state, e.g. hanging down.
-  3. Press START. The script enables the drive, runs one speed sequence,
+  3. Press START. The script enables the drive, runs one cyclic sequence,
      logs telemetry to a CSV file, then disables the drive.
   4. Return START to OFF, set the next initial state, press START again.
 
-Each START runs the next --trial sequence and writes a separate CSV file.
+Each START runs the same parameterized sequence and writes a separate CSV file.
 """
 from __future__ import annotations
 
@@ -16,6 +16,7 @@ import argparse
 import csv
 import datetime as dt
 import math
+import random
 import struct
 import sys
 import time
@@ -131,31 +132,52 @@ def wrap_counts(count: int, center: int, cpr: int) -> int:
     return ((err + cpr // 2) % cpr) - cpr // 2
 
 
-def parse_sequence(text: str) -> list[tuple[float, float]]:
+def build_cycle_sequence(
+    speed_hz: float,
+    move_s: float,
+    stop_s: float,
+    cycles: int,
+    first_direction: str,
+) -> list[dict]:
+    if speed_hz <= 0.0:
+        raise ValueError("--speed-hz must be positive")
+    if move_s <= 0.0:
+        raise ValueError("--move-s must be positive")
+    if stop_s < 0.0:
+        raise ValueError("--stop-s cannot be negative")
+    if cycles <= 0:
+        raise ValueError("--cycles must be positive")
+
+    sign = 1.0 if first_direction == "positive" else -1.0
     seq = []
-    for raw_part in text.split(","):
-        part = raw_part.strip()
-        if not part:
-            continue
-        if ":" not in part:
-            raise ValueError(f"bad segment '{part}', expected speed_hz:seconds")
-        speed_s, dur_s = part.split(":", 1)
-        speed_hz = float(speed_s)
-        duration_s = float(dur_s)
-        if duration_s <= 0.0:
-            raise ValueError(f"bad duration in '{part}'")
-        seq.append((speed_hz, duration_s))
-    if not seq:
-        raise ValueError("empty sequence")
+    for cycle_idx in range(1, cycles + 1):
+        seq.append({
+            "cycle_idx": cycle_idx,
+            "phase": "move_first",
+            "speed_hz": sign * speed_hz,
+            "duration_s": move_s,
+        })
+        if stop_s > 0.0:
+            seq.append({
+                "cycle_idx": cycle_idx,
+                "phase": "stop_first",
+                "speed_hz": 0.0,
+                "duration_s": stop_s,
+            })
+        seq.append({
+            "cycle_idx": cycle_idx,
+            "phase": "move_second",
+            "speed_hz": -sign * speed_hz,
+            "duration_s": move_s,
+        })
+        if stop_s > 0.0:
+            seq.append({
+                "cycle_idx": cycle_idx,
+                "phase": "stop_second",
+                "speed_hz": 0.0,
+                "duration_s": stop_s,
+            })
     return seq
-
-
-def default_trials() -> list[list[tuple[float, float]]]:
-    return [
-        parse_sequence("1200:0.25,-1200:0.25,0:0.40"),
-        parse_sequence("1800:0.25,-1800:0.25,0:0.40"),
-        parse_sequence("2500:0.20,-2500:0.20,0:0.50"),
-    ]
 
 
 def parse_args() -> argparse.Namespace:
@@ -165,13 +187,33 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--port", required=True, help="Serial port, e.g. COM5")
     ap.add_argument("--baud", type=int, default=460800)
     ap.add_argument("--outdir", default="scripts/logs_sequence")
-    ap.add_argument("--trial", action="append",
-                    help="Sequence as speed_hz:seconds,... Use multiple --trial values.")
-    ap.add_argument("--repeat-last", action="store_true",
-                    help="After the last --trial, keep repeating it on each START.")
+    ap.add_argument("--speed-hz", type=float, default=1500.0,
+                    help="Absolute speed for both directions.")
+    ap.add_argument("--move-s", type=float, default=0.25,
+                    help="Time spent moving in each direction.")
+    ap.add_argument("--stop-s", type=float, default=0.40,
+                    help="Stop time after each move.")
+    ap.add_argument("--cycles", type=int, default=3,
+                    help="Number of left/right cycles per START.")
+    ap.add_argument("--first-direction", choices=["positive", "negative"],
+                    default="positive",
+                    help="Sign of the first speed command. Swap if left/right is reversed.")
+    ap.add_argument("--experiments", type=int, default=1,
+                    help="How many START-triggered experiment files to collect.")
+    ap.add_argument("--repeat", action="store_true",
+                    help="Keep waiting for more START edges after --experiments.")
     ap.add_argument("--acc", type=int, default=190000)
-    ap.add_argument("--max-speed-hz", type=float, default=6000.0)
+    ap.add_argument("--max-speed-hz", type=float, default=25000.0)
     ap.add_argument("--max-position-steps", type=int, default=11000)
+    ap.add_argument("--noise-hz", type=float, default=0.0,
+                    help="Random additive speed noise amplitude in Hz.")
+    ap.add_argument("--noise-period-s", type=float, default=0.10,
+                    help="How often to draw a new noise target.")
+    ap.add_argument("--noise-alpha", type=float, default=0.15,
+                    help="Smoothing factor toward each noise target, 1=no smoothing.")
+    ap.add_argument("--noise-on-stop", action="store_true",
+                    help="Also apply speed noise during stop phases.")
+    ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--reset-fault", action="store_true")
     ap.add_argument("--zero-cart", action="store_true",
                     help="Send SET_ZERO before every trial. Use only from a known cart zero.")
@@ -197,6 +239,10 @@ def write_sample(
     trial_idx: int,
     segment_idx: int,
     segment_t_s: float,
+    cycle_idx: int,
+    phase: str,
+    base_hz: float,
+    noise_hz: float,
     command_hz: float,
     stop_reason: str = "",
 ) -> None:
@@ -206,10 +252,14 @@ def write_sample(
         "trial_idx": trial_idx,
         "segment_idx": segment_idx,
         "segment_t_s": f"{segment_t_s:.6f}",
+        "cycle_idx": cycle_idx,
+        "phase": phase,
         "encoder_count": tlm["encoder_count"],
         "theta_counts": theta_counts,
         "theta_rad": f"{theta_rad:.8f}",
         "position_steps": tlm["position_steps"],
+        "base_speed_hz": f"{base_hz:.3f}",
+        "noise_speed_hz": f"{noise_hz:.3f}",
         "command_speed_hz": f"{command_hz:.3f}",
         "applied_speed_hz": f"{tlm['applied_speed_hz']:.3f}",
         "applied_acc": tlm["applied_acc"],
@@ -264,18 +314,25 @@ def run_trial(
     parser: Parser,
     args: argparse.Namespace,
     trial_idx: int,
-    seq: list[tuple[float, float]],
+    seq: list[dict],
     encoder_cpr: int,
 ) -> tuple[str, int, Path]:
     out_path = make_output_path(args.outdir, trial_idx)
     counts_to_rad = 2.0 * math.pi / float(encoder_cpr)
     rows = 0
     stop_reason = "completed"
+    rng = random.Random(args.seed + trial_idx - 1)
+    noise_target = 0.0
+    noise_value = 0.0
+    next_noise_update = 0.0
+    noise_alpha = max(0.0, min(1.0, args.noise_alpha))
 
     fieldnames = [
         "pc_t_s", "esp_ts_us", "trial_idx", "segment_idx", "segment_t_s",
+        "cycle_idx", "phase",
         "encoder_count", "theta_counts", "theta_rad", "position_steps",
-        "command_speed_hz", "applied_speed_hz", "applied_acc",
+        "base_speed_hz", "noise_speed_hz", "command_speed_hz",
+        "applied_speed_hz", "applied_acc",
         "limit", "fault", "enabled", "soft_limit", "start", "stop_reason",
     ]
 
@@ -288,9 +345,16 @@ def run_trial(
     t0 = time.perf_counter()
     segment_idx = 0
     segment_start = t0
-    current_cmd = max(-args.max_speed_hz, min(args.max_speed_hz, seq[0][0]))
+    last_keepalive = t0
+    current_cmd = max(-args.max_speed_hz, min(args.max_speed_hz, seq[0]["speed_hz"]))
     send_speed(ser, current_cmd)
-    print(f"Trial {trial_idx}: {seq} -> {out_path}")
+    print(
+        f"Trial {trial_idx}: speed={args.speed_hz:.1f}Hz "
+        f"limit={args.max_speed_hz:.1f}Hz "
+        f"noise={args.noise_hz:.1f}Hz "
+        f"move={args.move_s:.3f}s stop={args.stop_s:.3f}s "
+        f"cycles={args.cycles} -> {out_path}"
+    )
 
     try:
         with out_path.open("w", newline="", encoding="utf-8") as f:
@@ -306,7 +370,27 @@ def run_trial(
                 now = time.perf_counter()
                 pc_t_s = now - t0
                 segment_t_s = now - segment_start
-                speed_hz, duration_s = seq[segment_idx]
+                segment = seq[segment_idx]
+                duration_s = segment["duration_s"]
+                base_cmd = max(
+                    -args.max_speed_hz,
+                    min(args.max_speed_hz, segment["speed_hz"]),
+                )
+
+                if args.noise_hz > 0.0 and pc_t_s >= next_noise_update:
+                    noise_target = rng.uniform(-args.noise_hz, args.noise_hz)
+                    next_noise_update = pc_t_s + max(0.001, args.noise_period_s)
+                noise_value += noise_alpha * (noise_target - noise_value)
+                apply_noise = args.noise_on_stop or base_cmd != 0.0
+                noise_cmd = noise_value if apply_noise else 0.0
+                desired_cmd = max(
+                    -args.max_speed_hz,
+                    min(args.max_speed_hz, base_cmd + noise_cmd),
+                )
+
+                if now - last_keepalive >= 0.05:
+                    ser.write(build(CMD_PING))
+                    last_keepalive = now
 
                 if segment_t_s >= duration_s:
                     segment_idx += 1
@@ -316,11 +400,18 @@ def run_trial(
                     else:
                         segment_start = now
                         segment_t_s = 0.0
-                        current_cmd = max(
+                        last_keepalive = now
+                        segment = seq[segment_idx]
+                        base_cmd = max(
                             -args.max_speed_hz,
-                            min(args.max_speed_hz, seq[segment_idx][0]),
+                            min(args.max_speed_hz, segment["speed_hz"]),
                         )
-                        send_speed(ser, current_cmd)
+                        apply_noise = args.noise_on_stop or base_cmd != 0.0
+                        noise_cmd = noise_value if apply_noise else 0.0
+                        desired_cmd = max(
+                            -args.max_speed_hz,
+                            min(args.max_speed_hz, base_cmd + noise_cmd),
+                        )
 
                 if tlm["fault"]:
                     stop_reason = "fault"
@@ -340,10 +431,17 @@ def run_trial(
 
                 write_sample(
                     writer, pc_t_s, tlm, theta_counts, theta_rad, trial_idx,
-                    min(segment_idx, len(seq) - 1), segment_t_s, current_cmd,
+                    min(segment_idx, len(seq) - 1), segment_t_s,
+                    segment["cycle_idx"], segment["phase"], base_cmd, noise_cmd,
+                    desired_cmd,
                     "" if stop_reason == "completed" and segment_idx < len(seq) else stop_reason,
                 )
                 rows += 1
+
+                if stop_reason == "completed" and segment_idx < len(seq):
+                    if abs(desired_cmd - current_cmd) >= 1.0:
+                        current_cmd = desired_cmd
+                        send_speed(ser, current_cmd)
 
                 if stop_reason != "completed" or segment_idx >= len(seq):
                     break
@@ -356,14 +454,14 @@ def run_trial(
 def main() -> int:
     args = parse_args()
     encoder_cpr = args.encoder_ppr * (2 if args.decode == "x2" else 4)
-    if args.trial:
-        try:
-            trials = [parse_sequence(t) for t in args.trial]
-        except ValueError as exc:
-            print(f"Bad --trial: {exc}")
-            return 2
-    else:
-        trials = default_trials()
+    try:
+        seq = build_cycle_sequence(
+            args.speed_hz, args.move_s, args.stop_s, args.cycles,
+            args.first_direction,
+        )
+    except ValueError as exc:
+        print(f"Bad sequence parameters: {exc}")
+        return 2
 
     ser = open_serial(args.port, args.baud)
     parser = Parser()
@@ -377,11 +475,7 @@ def main() -> int:
 
         trial_idx = 1
         while True:
-            if trial_idx <= len(trials):
-                seq = trials[trial_idx - 1]
-            elif args.repeat_last:
-                seq = trials[-1]
-            else:
+            if trial_idx > args.experiments and not args.repeat:
                 break
 
             if not wait_for_start_edge(ser, parser):
