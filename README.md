@@ -22,6 +22,7 @@ ESP-IDF-PRODUCTION/
     safety/                 # odczyt LIMIT + fault latch + safety_task
   scripts/
     pc_console.py           # konsola testowa PC (pyserial)
+    collect_near_upright.py # PC-loop: prosta regulacja + zapis danych CSV
 ```
 
 ## Taski FreeRTOS
@@ -208,6 +209,46 @@ python scripts/pc_console.py --port COM5 monitor 3
 3. Dojezdzajac do +/-`MOTOR_SOFT_LIMIT_STEPS` telemetria pokazuje `soft=1`,
    a `applied_speed_hz` spada do 0 w kierunku "na zewnatrz". Komenda z
    przeciwnym znakiem (powrot do srodka) dziala normalnie.
+
+### 5. Zbieranie danych blisko pionu z PC
+
+`scripts/collect_near_upright.py` uruchamia prosta petle PC: odbiera binarna
+telemetrie, estymuje `theta`, `theta_dot`, `x_dot`, wysyla `SET_SPEED_HZ` i
+zapisuje probki state/action do CSV. Domyslna procedura: START musi byc OFF,
+uruchom skrypt, ustaw recznie wahadlo blisko pionu, nacisnij lokalny START.
+Dopiero po przejsciu `start_state` z 0 na 1 skrypt wysyla `enable=1` i zaczyna
+regulacje z PC. Jesli skrypt od razu widzi `start_state=1`, konczy prace bez
+wlaczania napedu.
+
+Pierwszy test wykonaj z malym limitem predkosci i reka przy awaryjnym
+wylaczeniu. Domyslne znaki `--k-theta -160000 --k-omega -12000` sa dobrane do
+aktualnego kierunku enkodera/napedu. Jesli po zmianach okablowania reakcja
+ucieka od pionu, odwroc znaki obu czlonow katowych.
+
+```powershell
+python scripts/collect_near_upright.py --port COM5 --seconds 10 --max-speed-hz 3000
+```
+
+Tryb pasywny tylko loguje telemetrie i wysyla zerowa predkosc:
+
+```powershell
+python scripts/collect_near_upright.py --port COM5 --mode passive --seconds 10
+```
+
+Przydatne parametry startowe:
+
+- `--theta-center-counts 4001` - licznik enkodera dla pionu ze starego testu.
+- `--encoder-ppr 2000 --decode x4` - odpowiada `ENCODER_CPR=8000`.
+- `--zero-cart` - wysyla `SET_ZERO`; uzywac tylko po ustawieniu wozka w punkcie
+  odniesienia.
+- `--arm start` - domyslnie czeka na lokalny START z telemetrii.
+- `--arm immediate` - start bez czekania na lokalny START, tylko do testow.
+- `--ignore-start-off` - nie konczy sesji po powrocie START do OFF.
+- `--allow-start-already-on` - pozwala wystartowac mimo START=ON przy starcie
+  skryptu; tylko do diagnostyki.
+- `--max-angle-rad`, `--max-position-steps` - limity bezpiecznego przerwania.
+- `--excite-hz` - maly losowy sygnal dodany do komendy, przydatny pozniej do
+  zbierania bogatszych danych identyfikacyjnych.
 
 ## Kryteria akceptacji - mapowanie
 
