@@ -1,1 +1,0 @@
-pc_t_s,esp_ts_us,dt_s,encoder_count,theta_counts,theta_rad,theta_dot_rad_s,position_steps,cart_vel_steps_s,command_speed_hz,applied_speed_hz,applied_acc,limit,fault,enabled,soft_limit,start,mode,stop_reason

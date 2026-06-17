@@ -204,7 +204,7 @@ def parse_args() -> argparse.Namespace:
         description="Collect near-upright pendulum state/action data from ESP32 I/O firmware."
     )
     ap.add_argument("--port", required=True, help="Serial port, e.g. COM5")
-    ap.add_argument("--baud", type=int, default=115200)
+    ap.add_argument("--baud", type=int, default=460800)
     ap.add_argument("--seconds", type=float, default=20.0)
     ap.add_argument("--outdir", default="scripts/logs_pc")
     ap.add_argument("--mode", choices=["balance", "passive"], default="balance")
@@ -259,6 +259,38 @@ def make_output_path(outdir: str) -> Path:
     path.mkdir(parents=True, exist_ok=True)
     stamp = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
     return path / f"near_upright_{stamp}.csv"
+
+
+def write_sample(
+    writer: csv.DictWriter,
+    t_s: float,
+    tlm: dict,
+    state: dict,
+    cmd_hz: float,
+    mode: str,
+    stop_reason: str = "",
+) -> None:
+    writer.writerow({
+        "pc_t_s": f"{t_s:.6f}",
+        "esp_ts_us": tlm["esp_ts_us"],
+        "dt_s": f"{state['dt_s']:.6f}",
+        "encoder_count": tlm["encoder_count"],
+        "theta_counts": state["theta_counts"],
+        "theta_rad": f"{state['theta_rad']:.8f}",
+        "theta_dot_rad_s": f"{state['theta_dot_rad_s']:.8f}",
+        "position_steps": tlm["position_steps"],
+        "cart_vel_steps_s": f"{state['cart_vel_steps_s']:.3f}",
+        "command_speed_hz": f"{cmd_hz:.3f}",
+        "applied_speed_hz": f"{tlm['applied_speed_hz']:.3f}",
+        "applied_acc": tlm["applied_acc"],
+        "limit": tlm["limit"],
+        "fault": tlm["fault"],
+        "enabled": tlm["enabled"],
+        "soft_limit": tlm["soft_limit"],
+        "start": tlm["start"],
+        "mode": mode,
+        "stop_reason": stop_reason,
+    })
 
 
 def main() -> int:
@@ -365,31 +397,15 @@ def main() -> int:
                         stop_reason = "position_limit"
 
                     if stop_reason != "completed":
+                        write_sample(
+                            writer, t_s, tlm, state, 0.0, args.mode, stop_reason
+                        )
+                        rows_written += 1
                         break
 
                     send_speed(ser, cmd_hz)
 
-                    writer.writerow({
-                        "pc_t_s": f"{t_s:.6f}",
-                        "esp_ts_us": tlm["esp_ts_us"],
-                        "dt_s": f"{state['dt_s']:.6f}",
-                        "encoder_count": tlm["encoder_count"],
-                        "theta_counts": state["theta_counts"],
-                        "theta_rad": f"{state['theta_rad']:.8f}",
-                        "theta_dot_rad_s": f"{state['theta_dot_rad_s']:.8f}",
-                        "position_steps": tlm["position_steps"],
-                        "cart_vel_steps_s": f"{state['cart_vel_steps_s']:.3f}",
-                        "command_speed_hz": f"{cmd_hz:.3f}",
-                        "applied_speed_hz": f"{tlm['applied_speed_hz']:.3f}",
-                        "applied_acc": tlm["applied_acc"],
-                        "limit": tlm["limit"],
-                        "fault": tlm["fault"],
-                        "enabled": tlm["enabled"],
-                        "soft_limit": tlm["soft_limit"],
-                        "start": tlm["start"],
-                        "mode": args.mode,
-                        "stop_reason": "",
-                    })
+                    write_sample(writer, t_s, tlm, state, cmd_hz, args.mode)
                     rows_written += 1
 
                     if time.perf_counter() - last_print > 0.5:

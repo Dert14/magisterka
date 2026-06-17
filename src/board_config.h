@@ -27,14 +27,15 @@
 // ---- UART do PC ----
 // UART0 = ten sam port USB co programowanie/konsola. Aby logi ESP_LOG nie
 // smiecily w binarnej telemetrii, wyjscie ma dwa tryby (OUT_BINARY/OUT_DEBUG),
-// przelaczane komenda SET_OUTPUT_MODE. Baud 115200 = zgodny z konsola/monitorem.
+// przelaczane komenda SET_OUTPUT_MODE. Baud 460800 daje zapas dla telemetrii
+// 250 Hz + komend predkosci z PC.
 #define PC_UART_NUM UART_NUM_0
 #define PC_UART_TX 1   // domyslny TX0 (mostek USB-UART devkitu)
 #define PC_UART_RX 3   // domyslny RX0
-#define PC_UART_BAUD 115200
+#define PC_UART_BAUD 460800
 
 // ---- Timing ----
-#define TELEMETRY_PERIOD_US 10000        // 100 Hz (tryb binarny)
+#define TELEMETRY_PERIOD_US 4000         // 250 Hz (tryb binarny)
 #define TELEMETRY_DEBUG_PERIOD_US 100000 // 10 Hz (tryb tekstowy/debug)
 #define COMM_TIMEOUT_US 200000           // 200 ms brak komend => bezpieczny stop
 #define SAFETY_PERIOD_MS 2               // 500 Hz odczyt LIMIT

@@ -23,6 +23,7 @@ ESP-IDF-PRODUCTION/
   scripts/
     pc_console.py           # konsola testowa PC (pyserial)
     collect_near_upright.py # PC-loop: prosta regulacja + zapis danych CSV
+    collect_motion_sequence.py # open-loop sekwencje ruchu + CSV
 ```
 
 ## Taski FreeRTOS
@@ -52,7 +53,7 @@ fault/enable. ISR sa minimalne (odczyt 2 pinow + tablica + inkrement).
 | UART0 RX | 3 | port USB (mostek devkitu) |
 
 > Cala komunikacja z PC idzie po **UART0 = tym samym porcie USB** co
-> programowanie (115200). Aby logi nie mieszaly sie z binarna telemetria,
+> programowanie (460800). Aby logi nie mieszaly sie z binarna telemetria,
 > ESP ma dwa **tryby wyjscia** przelaczane komenda `SET_OUTPUT_MODE` (0x08):
 > `BINARY` (czyste ramki, logi wyciszone) i `DEBUG` (czytelny tekst + `ESP_LOG`).
 > Po starcie tryb = DEBUG; `pc_console.py` sam przelacza na BINARY.
@@ -109,7 +110,7 @@ Komendy PC -> ESP32:
 | 0x08 | SET_OUTPUT_MODE | uint8 (0=binary, 1=debug) |
 
 Odpowiedzi/telemetria ESP32 -> PC: `PONG 0x81`, `ACK 0x82`, `NACK 0x83`,
-`TELEMETRY 0x84`. Telemetria leci okresowo **~100 Hz**, payload
+`TELEMETRY 0x84`. Telemetria leci okresowo **~250 Hz**, payload
 (packed, LE, 28 B):
 
 ```
@@ -124,7 +125,7 @@ uint8 fault_state | uint8 drive_enabled | uint8 soft_limit_state
 # w katalogu projektu
 pio run                 # kompilacja
 pio run -t upload       # wgranie
-pio device monitor      # log na UART0 (115200)
+pio device monitor      # log na UART0 (460800)
 ```
 
 (Jesli `pio` nie jest w PATH:
@@ -250,12 +251,36 @@ Przydatne parametry startowe:
 - `--excite-hz` - maly losowy sygnal dodany do komendy, przydatny pozniej do
   zbierania bogatszych danych identyfikacyjnych.
 
+### 6. Sekwencje ruchu od dolnej pozycji
+
+`scripts/collect_motion_sequence.py` wykonuje otwarte sekwencje predkosci
+wozka i zapisuje osobny CSV dla kazdego START. Procedura: START=OFF, uruchom
+skrypt, ustaw wahadlo w pozycji poczatkowej, nacisnij START. Po sekwencji
+skrypt zatrzymuje naped i czeka na kolejne OFF -> ON dla nastepnej proby.
+
+Domyslnie wykona trzy coraz mocniejsze sekwencje:
+
+```powershell
+python scripts/collect_motion_sequence.py --port COM5
+```
+
+Wlasne proby podaje sie jako `speed_hz:czas_s` rozdzielone przecinkami. Kazde
+`--trial` to osobny START i osobny plik CSV:
+
+```powershell
+python scripts/collect_motion_sequence.py --port COM5 --trial "1500:0.25,-1500:0.25,0:0.5" --trial "2500:0.20,-2500:0.20,0:0.5"
+```
+
+Pliki trafiaja domyslnie do `scripts/logs_sequence/`. W CSV jest m.in.
+`trial_idx`, `segment_idx`, `segment_t_s`, `command_speed_hz`,
+`applied_speed_hz`, `theta_rad`, `position_steps` i `stop_reason`.
+
 ## Kryteria akceptacji - mapowanie
 
 - Kompiluje sie w ESP-IDF bez recznego latania - `pio run` = SUCCESS.
 - `SET_SPEED_HZ` zmienia predkosc - `motor_task` + LEDC, widoczne w telemetrii.
 - LIMIT HIGH natychmiast zatrzymuje i latchuje - `safety_task` (500 Hz) + latch.
 - `RESET_FAULT` odblokowuje - `safety_reset_fault` (gdy krancowka nieaktywna).
-- Telemetria okresowa, spojne pola - `io_task`, ~100 Hz, struct packed.
+- Telemetria okresowa, spojne pola - `io_task`, ~250 Hz, struct packed.
 - Brak regulatora po stronie ESP - ESP robi tylko I/O.
 - Pozycja wozka + soft-limity - PCNT (STEP/DIR), `motor_get_position_steps`.

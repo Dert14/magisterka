@@ -7,7 +7,7 @@ CRC16-CCITT (poly 0x1021, init 0xFFFF) po [ID, LEN, PAYLOAD].
 
 Wymaga: pyserial  (pip install pyserial)
 
-Komunikacja idzie po tym samym porcie USB co programowanie (UART0, 115200).
+Komunikacja idzie po tym samym porcie USB co programowanie (UART0, 460800).
 ESP ma dwa tryby wyjscia, by logi nie smiecily w binarnej telemetrii:
   - BINARY - czyste ramki (ten skrypt wymusza go automatycznie),
   - DEBUG  - czytelny tekst + logi ESP_LOG (np. `pio device monitor`).
@@ -234,7 +234,7 @@ def read_for(ser, parser, seconds: float):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", required=True, help="np. COM5 lub /dev/ttyUSB0")
-    ap.add_argument("--baud", type=int, default=115200)
+    ap.add_argument("--baud", type=int, default=460800)
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     sub.add_parser("ping")
