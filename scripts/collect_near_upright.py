@@ -261,6 +261,37 @@ def make_output_path(outdir: str) -> Path:
     return path / f"near_upright_{stamp}.csv"
 
 
+def wait_for_start_edge(
+    ser: serial.Serial, parser: Parser, allow_already_on: bool = False
+) -> bool:
+    saw_off = False
+    warned = False
+    print("Waiting for START OFF -> ON...")
+    while True:
+        data = ser.read(512)
+        if not data:
+            continue
+        for msg_id, payload in parser.feed(data):
+            if msg_id != MSG_TELEMETRY:
+                continue
+            tlm = decode_telemetry(payload)
+            if tlm is None:
+                continue
+            ser.write(build(CMD_PING))
+            if not tlm["start"]:
+                saw_off = True
+            elif saw_off:
+                return True
+            elif allow_already_on:
+                return True
+            elif not warned:
+                print(
+                    "START is already ON. Switch it OFF, prepare the pendulum, "
+                    "then switch it ON."
+                )
+                warned = True
+
+
 def write_sample(
     writer: csv.DictWriter,
     t_s: float,
@@ -296,7 +327,6 @@ def write_sample(
 def main() -> int:
     args = parse_args()
     encoder_cpr = args.encoder_ppr * (2 if args.decode == "x2" else 4)
-    out_path = make_output_path(args.outdir)
 
     ser = open_serial(args.port, args.baud)
     parser = Parser()
@@ -309,7 +339,7 @@ def main() -> int:
     t0 = time.perf_counter()
     last_rx = t0
     last_print = t0
-    saw_start_off = False
+    out_path: Path | None = None
 
     fieldnames = [
         "pc_t_s", "esp_ts_us", "dt_s",
@@ -330,12 +360,21 @@ def main() -> int:
             ser.write(build(CMD_SET_ZERO))
         ser.write(build(CMD_SET_ACC, struct.pack("<I", args.acc)))
 
-        print(f"Logging to {out_path}")
         if args.arm == "start":
-            print("Waiting for START telemetry state...")
+            if not wait_for_start_edge(
+                ser, parser, args.allow_start_already_on
+            ):
+                stop_reason = "telemetry_timeout"
+                return 1
+            armed = True
+            t0 = time.perf_counter()
         else:
             print("Arming immediately.")
+            armed = True
+            t0 = time.perf_counter()
 
+        out_path = make_output_path(args.outdir)
+        print(f"Logging to {out_path}")
         with out_path.open("w", newline="", encoding="utf-8") as f:
             writer = csv.DictWriter(f, fieldnames=fieldnames)
             writer.writeheader()
@@ -361,19 +400,8 @@ def main() -> int:
 
                     last_rx = time.perf_counter()
 
-                    if not armed:
-                        if args.arm == "start":
-                            if not tlm["start"]:
-                                saw_start_off = True
-                                ser.write(build(CMD_PING))
-                                continue
-                            if not saw_start_off and not args.allow_start_already_on:
-                                stop_reason = "start_already_on"
-                                break
-                        armed = True
-                        t0 = time.perf_counter()
-                        if args.mode != "passive":
-                            ser.write(build(CMD_SET_ENABLE, bytes([1])))
+                    if args.mode != "passive" and rows_written == 0:
+                        ser.write(build(CMD_SET_ENABLE, bytes([1])))
 
                     state = estimator.update(tlm)
                     t_s = time.perf_counter() - t0
@@ -426,7 +454,8 @@ def main() -> int:
         shutdown_drive(ser)
         ser.close()
 
-    print(f"Stopped: {stop_reason}. Rows: {rows_written}. CSV: {out_path}")
+    csv_text = str(out_path) if out_path is not None else "not created"
+    print(f"Stopped: {stop_reason}. Rows: {rows_written}. CSV: {csv_text}")
     return 0 if rows_written > 0 else 1
 
 

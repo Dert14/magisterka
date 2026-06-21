@@ -13,6 +13,7 @@ Each START runs the same parameterized sequence and writes a separate CSV file.
 from __future__ import annotations
 
 import argparse
+from collections import deque
 import csv
 import datetime as dt
 import math
@@ -61,6 +62,7 @@ def build(msg_id: int, payload: bytes = b"") -> bytes:
 class Parser:
     def __init__(self) -> None:
         self.buf = bytearray()
+        self.telemetry_queue: deque[dict] = deque()
 
     def feed(self, data: bytes) -> list[tuple[int, bytes]]:
         self.buf.extend(data)
@@ -273,6 +275,9 @@ def write_sample(
 
 
 def read_telemetry(ser: serial.Serial, parser: Parser, timeout_s: float = 0.5) -> dict | None:
+    if parser.telemetry_queue:
+        return parser.telemetry_queue.popleft()
+
     end = time.perf_counter() + timeout_s
     while time.perf_counter() < end:
         data = ser.read(512)
@@ -283,7 +288,9 @@ def read_telemetry(ser: serial.Serial, parser: Parser, timeout_s: float = 0.5) -
                 continue
             tlm = decode_telemetry(payload)
             if tlm is not None:
-                return tlm
+                parser.telemetry_queue.append(tlm)
+        if parser.telemetry_queue:
+            return parser.telemetry_queue.popleft()
     return None
 
 

@@ -24,6 +24,7 @@ ESP-IDF-PRODUCTION/
     pc_console.py           # konsola testowa PC (pyserial)
     collect_near_upright.py # PC-loop: prosta regulacja + zapis danych CSV
     collect_motion_sequence.py # open-loop sekwencje ruchu + CSV
+    collect_smooth_excitation.py # plynne wzbudzenie wielosinusoida + CSV
 ```
 
 ## Taski FreeRTOS
@@ -293,6 +294,34 @@ Pliki trafiaja domyslnie do `scripts/logs_sequence/`. W CSV jest m.in.
 `trial_idx`, `cycle_idx`, `phase`, `segment_idx`, `segment_t_s`,
 `base_speed_hz`, `noise_speed_hz`, `command_speed_hz`, `applied_speed_hz`,
 `theta_rad`, `position_steps` i `stop_reason`.
+
+### 7. Plynne wzbudzenie do identyfikacji modelu
+
+`scripts/collect_smooth_excitation.py` generuje deterministyczna sume sinusoid
+o roznych czestotliwosciach i losowych fazach. Dla tego samego `--seed` sygnal
+jest identyczny. Jest plynny, ograniczony amplitudowo i pobudza kilka skal
+czasowych jednoczesnie, co daje bogatsze dane do identyfikacji niz pojedyncza
+stala predkosc lub skok lewo/prawo.
+
+Skrypt czeka na START OFF -> ON, lagodnie zwieksza i zmniejsza amplitude oraz
+dodaje mala korekcje utrzymujaca wozek blisko srodka. W CSV osobno zapisywane
+sa: wzbudzenie, korekcja pozycji, tlumienie predkosci, finalna komenda i
+predkosc rzeczywiscie wykonana przez ESP32.
+
+Bezpieczna komenda poczatkowa:
+
+```powershell
+python scripts/collect_smooth_excitation.py --port COM5 --duration-s 20 --peak-hz 3000 --min-freq-hz 0.12 --max-freq-hz 2.0 --components 9 --seed 1
+```
+
+Kilka roznych, powtarzalnych eksperymentow:
+
+```powershell
+python scripts/collect_smooth_excitation.py --port COM5 --duration-s 25 --peak-hz 3500 --experiments 5 --seed 10
+```
+
+Kolejne proby automatycznie uzywaja `seed`, `seed+1`, itd. Pliki sa zapisywane
+do `scripts/logs_excitation/`.
 
 ## Kryteria akceptacji - mapowanie
 

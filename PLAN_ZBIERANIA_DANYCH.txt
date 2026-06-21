@@ -1,0 +1,364 @@
+PLAN ZBIERANIA DANYCH DO MODELU WAHADLA
+=======================================
+
+Cel
+---
+Pierwszy model ma opisywac dynamike stanowiska blisko niestabilnego pionu.
+Model bedzie uczony bez znajomosci mas, dlugosci i innych parametrow fizycznych.
+Wejsciem modelu bedzie historia kata, pozycji wozka, komendy predkosci i
+rzeczywiscie wykonanej predkosci. Pozniej model posluzy jako symulator dla RL.
+
+
+0. Przygotowanie
+----------------
+
+1. Uruchamiaj polecenia z katalogu:
+
+   C:\Users\marci\Documents\PlatformIO\Projects\ESP-IDF-PRODUCTION
+
+2. Zainstaluj pyserial, jezeli go nie ma:
+
+   python -m pip install pyserial
+
+3. W ponizszych poleceniach zamien COM5 na port ESP32.
+
+4. Przed kazda proba:
+
+   - START ma byc OFF.
+   - Ustaw wozek blisko srodka.
+   - Ustaw wahadlo blisko pionu i trzymaj je nieruchomo.
+   - Ustaw START na ON i natychmiast pusc wahadlo.
+   - Po puszczeniu nie dotykaj wahadla ani wozka.
+   - W trybie constant pozostaw START=ON do zakonczenia automatycznego powrotu
+     wozka. Podczas przerwy przed powrotem zabezpiecz wahadlo reka.
+   - W pozostalych trybach po zakonczeniu ustaw START ponownie na OFF.
+   - Przygotuj kolejna pozycje poczatkowa i ponownie ustaw START na ON.
+
+   Jezeli START jest ON juz podczas uruchamiania skryptu, collector nie tworzy
+   wadliwego ani pustego CSV. Czeka, az wykonasz pelna sekwencje OFF -> ON.
+
+5. Pierwsza proba po recznym ustawieniu wozka w srodku powinna uzyc
+   --zero-cart. W kolejnych probach nie zeruj pozycji w przypadkowym miejscu.
+
+6. Domyslne zabezpieczenia nowego collectora:
+
+   - |theta| > 0.30 rad,
+   - |position_steps| > 8000,
+   - LIMIT, fault, soft-limit,
+   - START OFF,
+   - brak telemetrii.
+
+7. Kierunki dodatni i ujemny musza byc reprezentowane podobna liczba prob.
+
+8. Nie usuwaj krotkich ani "nieudanych" plikow. Odrzucimy je programowo po
+   analizie. Zanotuj tylko przypadki, w ktorych po puszczeniu dotknales ukladu.
+
+
+1. Kalibracja pionu
+-------------------
+
+Obecna wartosc to:
+
+   --theta-center-counts 4001
+
+Przed duza seria sprawdz w monitorze, czy przy dokladnym pionie theta_rad jest
+bliskie 0. Jezeli stale odchylenie przekracza okolo 0.005 rad, trzeba wyznaczyc
+nowe theta-center-counts i stosowac te sama wartosc we wszystkich probach.
+
+
+2. Swobodne puszczenie - najwazniejszy pierwszy zestaw
+------------------------------------------------------
+
+Skrypt:
+
+   scripts\collect_identification.py
+
+Polecenie:
+
+   python scripts\collect_identification.py --port COM5 --mode passive --experiments 50 --duration-s 3 --max-angle-rad 0.30 --max-position-steps 8000 --outdir scripts\logs_model
+
+Jak wykonac:
+
+   - 25 prob rozpocznij z lekkiego wychylenia na jedna strone.
+   - 25 prob rozpocznij z lekkiego wychylenia na druga strone.
+   - Zmieniaj wielkosc wychylenia: okolo 0.02, 0.04, 0.07 i 0.10 rad.
+   - Nie musisz trafic idealnie w zadany kat. Potrzebna jest roznorodnosc.
+   - Po START pusc wahadlo i go nie dotykaj.
+
+Cel:
+
+   50 prob, zwykle 1-3 s kazda.
+
+Uwaga:
+
+   START w aktualnym firmware wlacza naped. Tryb passive wysyla predkosc 0 Hz,
+   wiec wozek pozostaje nieruchomy, ale sterownik jest aktywny.
+
+
+3. Stala predkosc
+-----------------
+
+Zbieramy osobne serie dla predkosci:
+
+   -3500, -2000, -1000, -500, -250,
+    +250, +500, +1000, +2000, +3500 Hz
+
+Przyklad dla +1000 Hz:
+
+   python scripts\collect_identification.py --port COM5 --mode constant --speed-hz 1000 --experiments 10 --duration-s 2 --max-angle-rad 0.30 --max-position-steps 8000 --outdir scripts\logs_model
+
+Przyklad dla -1000 Hz:
+
+   python scripts\collect_identification.py --port COM5 --mode constant --speed-hz -1000 --experiments 10 --duration-s 2 --max-angle-rad 0.30 --max-position-steps 8000 --outdir scripts\logs_model
+
+Po zakonczeniu zapisu skrypt:
+
+   - zatrzymuje wozek,
+   - zamyka CSV danej proby,
+   - czeka domyslnie 1 s,
+   - wraca do pozycji wozka zapamietanej na poczatku proby,
+   - nie zapisuje powrotu do CSV.
+
+Podczas tej sekundowej przerwy zabezpiecz wahadlo. START musi pozostac ON do
+zakonczenia powrotu. Nie rozpoczynaj ustawiania kolejnej proby, dopoki skrypt
+nie wypisze wyniku "Cart return". Predkosc i przerwe mozna ustawic:
+
+   --return-pause-s 1.5 --return-speed-hz 800
+
+Domyslne ustawienia powrotu:
+
+   --return-pause-s 1.0
+   --return-speed-hz 1000
+   --return-tolerance-steps 50
+   --return-timeout-s 10
+
+Powrot mozna wylaczyc:
+
+   --no-return
+
+Powrot nie zostanie wykonany po LIMIT, fault, soft-limit, utracie telemetrii
+ani po ustawieniu START=OFF. Po przekroczeniu limitu kata powrot jest dozwolony,
+ale podczas przerwy trzeba bezpiecznie przytrzymac wahadlo.
+
+Jak wykonac:
+
+   - Dla kazdej predkosci wykonaj 10 prob.
+   - Polowe zacznij z niewielkiego dodatniego kata, polowe z ujemnego.
+   - Zacznij od 250 i 500 Hz.
+   - Po potwierdzeniu bezpieczenstwa przejdz do 1000, 2000 i 3500 Hz.
+   - Jezeli 3500 Hz jest zbyt agresywne, przerwij ten poziom.
+
+Cel:
+
+   Do 100 prob. Minimum: po 6 prob dla kazdej bezpiecznej predkosci.
+
+
+4. Pojedyncze impulsy
+---------------------
+
+Amplitudy:
+
+   +/-500, +/-1000, +/-2000, +/-3500 Hz
+
+Czasy impulsu:
+
+   0.05, 0.10, 0.20, 0.35 s
+
+Przyklad:
+
+   python scripts\collect_identification.py --port COM5 --mode pulse --speed-hz 1000 --pre-s 0.10 --pulse-s 0.10 --post-s 0.40 --experiments 5 --max-angle-rad 0.30 --max-position-steps 8000 --outdir scripts\logs_model
+
+Dla przeciwnego kierunku zmien tylko:
+
+   --speed-hz -1000
+
+Jak wykonac:
+
+   - Dla kazdej wybranej pary amplituda/czas wykonaj 3-5 prob.
+   - Zachowaj podobna liczbe impulsow dodatnich i ujemnych.
+   - Nie trzeba wykonywac wszystkich 32 kombinacji, jezeli wyzsze amplitudy sa
+     niebezpieczne.
+
+Zalecane minimum 12 kombinacji:
+
+   +/-500 Hz   x 0.10 i 0.20 s
+   +/-1000 Hz  x 0.05, 0.10 i 0.20 s
+   +/-2000 Hz  x 0.05 s
+
+Cel:
+
+   40-60 prob.
+
+
+5. Losowe schodki predkosci
+---------------------------
+
+Polecenie bezpieczne na poczatek:
+
+   python scripts\collect_identification.py --port COM5 --mode random_steps --levels-hz=-1000,-500,0,500,1000 --step-min-s 0.08 --step-max-s 0.30 --duration-s 4 --experiments 30 --seed 100 --max-angle-rad 0.30 --max-position-steps 8000 --outdir scripts\logs_model
+
+Druga, szersza seria:
+
+   python scripts\collect_identification.py --port COM5 --mode random_steps --levels-hz=-2500,-1500,-750,0,750,1500,2500 --step-min-s 0.08 --step-max-s 0.30 --duration-s 4 --experiments 30 --seed 1000 --max-angle-rad 0.30 --max-position-steps 8000 --outdir scripts\logs_model
+
+Kazda proba ma inny seed. Skrypt losuje poziom predkosci i czas utrzymania.
+
+Cel:
+
+   60 prob, po 30 w zakresie waskim i szerokim.
+
+
+6. Sekwencje lewo/prawo - istniejacy skrypt
+--------------------------------------------
+
+Skrypt:
+
+   scripts\collect_motion_sequence.py
+
+Bezpieczna seria:
+
+   python scripts\collect_motion_sequence.py --port COM5 --speed-hz 1000 --move-s 0.10 --stop-s 0.20 --cycles 3 --experiments 15 --first-direction positive --max-position-steps 8000 --outdir scripts\logs_model\motion_positive
+
+Seria z przeciwnym pierwszym kierunkiem:
+
+   python scripts\collect_motion_sequence.py --port COM5 --speed-hz 1000 --move-s 0.10 --stop-s 0.20 --cycles 3 --experiments 15 --first-direction negative --max-position-steps 8000 --outdir scripts\logs_model\motion_negative
+
+Mozna powtorzyc dla 2000 Hz, jezeli seria 1000 Hz jest bezpieczna.
+
+Wazne:
+
+   Ten istniejacy skrypt nie ma limitu kata. Podczas jego uzywania obserwuj
+   uklad i wylacz START, gdy wahadlo odejdzie zbyt daleko od pionu.
+
+Cel:
+
+   30-60 prob.
+
+
+7. Gladkie wymuszenie wielosinusoida - istniejacy skrypt
+--------------------------------------------------------
+
+Skrypt:
+
+   scripts\collect_smooth_excitation.py
+
+Najpierw mala amplituda:
+
+   python scripts\collect_smooth_excitation.py --port COM5 --duration-s 4 --peak-hz 500 --min-freq-hz 0.2 --max-freq-hz 4.0 --components 9 --experiments 10 --seed 2000 --max-speed-hz 3000 --max-position-steps 8000 --outdir scripts\logs_model\multisine_500
+
+Nastepne serie:
+
+   --peak-hz 1000
+   --peak-hz 2000
+   --peak-hz 3000
+
+Dla kazdej amplitudy uzyj innego zakresu seed, np. 2000, 3000, 4000, 5000.
+
+Wazne:
+
+   Ten istniejacy skrypt nie ma limitu kata. Wylacz START, gdy wahadlo odejdzie
+   zbyt daleko od pionu. Jezeli korekcja centrowania przeszkadza w eksperymencie,
+   dodaj:
+
+   --position-gain 0 --velocity-gain 0
+
+Cel:
+
+   10 prob na kazda bezpieczna amplitude, lacznie do 40 prob.
+
+
+8. Dane z istniejacego regulatora
+---------------------------------
+
+Skrypt:
+
+   scripts\collect_near_upright.py
+
+Te dane sa przydatne jako uzupelnienie, ale nie moga byc jedynym zbiorem,
+poniewaz komenda regulatora jest silnie skorelowana z katem.
+
+Przyklad:
+
+   python scripts\collect_near_upright.py --port COM5 --mode balance --seconds 10 --max-speed-hz 5000 --max-angle-rad 0.30 --max-position-steps 8000 --excite-hz 300 --excite-period-s 0.15 --seed 6000 --outdir scripts\logs_model\closed_loop
+
+Cel:
+
+   20-30 prob po zebraniu danych otwartej petli.
+
+
+9. Kolejnosc wykonywania
+------------------------
+
+Nie zbieraj wszystkiego od razu. Zalecana kolejnosc:
+
+ETAP A:
+
+   1. 20 swobodnych puszczen.
+   2. Po 5 prob dla +/-250, +/-500 i +/-1000 Hz.
+   3. 20 prob impulsowych.
+   4. 10 prob random_steps w waskim zakresie.
+
+Po ETAPIE A przekaz pliki do analizy. Sprawdzimy:
+
+   - poprawna kalibracje pionu,
+   - rzeczywista czestotliwosc probkowania,
+   - opoznienie komenda -> applied_speed,
+   - zakres kata i predkosci katowej,
+   - symetrie obu kierunkow,
+   - czy potrzebne sa inne amplitudy lub czasy.
+
+ETAP B:
+
+   Dopiero po analizie rozszerz serie do liczebnosci podanych wyzej.
+
+
+10. Docelowa ilosc
+------------------
+
+Minimum do pierwszego modelu:
+
+   - 250 osobnych prob,
+   - co najmniej 10 minut danych bez dotykania ukladu,
+   - co najmniej 100 000 probek,
+   - oba kierunki reprezentowane podobnie.
+
+Zalecane:
+
+   - 400-600 prob,
+   - 20-30 minut poprawnych danych.
+
+Jakosc i roznorodnosc sa wazniejsze niz sama liczba minut.
+
+
+11. Gdzie beda pliki
+--------------------
+
+Nowy collector domyslnie tworzy:
+
+   scripts\logs_identification\passive
+   scripts\logs_identification\constant
+   scripts\logs_identification\pulse
+   scripts\logs_identification\random_steps
+
+W poleceniach z tej instrukcji ustawiono wspolny katalog:
+
+   scripts\logs_model
+
+Nie przenos plikow miedzy seriami podczas zbierania. Nazwa folderu i pliku
+bedzie wykorzystana jako metadane eksperymentu.
+
+
+12. Informacje, ktore nalezy zanotowac
+--------------------------------------
+
+W osobnym pliku tekstowym zapisz:
+
+   - date i godzine serii,
+   - uzyty port i polecenie,
+   - czy zmieniono mechanike, napiecie lub sterownik,
+   - czy pasek/naped byl napiety tak samo,
+   - nowa wartosc theta-center-counts, jezeli zostala zmieniona,
+   - pliki, podczas ktorych dotknieto ukladu,
+   - nietypowe zdarzenia: zgubione kroki, uderzenie, reset ESP32.
+
+Nie lacz danych po zmianie mechaniki bez oznaczenia tej zmiany.
