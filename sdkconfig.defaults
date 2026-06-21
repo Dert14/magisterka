@@ -1,3 +1,3 @@
 # Domyslne ustawienia SDK dla stanowiska wahadla (warstwa I/O ESP32).
-# Tick 1 kHz: rozdzielczosc 1 ms dla taskow 500 Hz i telemetrii 100 Hz.
+# Tick 1 kHz: rozdzielczosc 1 ms dla taskow 500 Hz i telemetrii 250 Hz.
 CONFIG_FREERTOS_HZ=1000

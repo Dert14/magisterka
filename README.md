@@ -77,7 +77,7 @@ odczyt zwrotny wyjscia LEDC) zliczane z kierunkiem z DIR (GPIO19). Licznik HW
 jest 16-bit, wiec na progach +/-10000 ISR akumuluje do **32-bit signed**
 (`motor_get_position_steps`). To dokladny licznik realnych krokow, nie estymata.
 
-`MOTOR_SOFT_LIMIT_STEPS` (`board_config.h`, domyslnie 28000, 0 = wyl.) blokuje
+`MOTOR_SOFT_LIMIT_STEPS` (`board_config.h`, domyslnie 12000, 0 = wyl.) blokuje
 ruch "na zewnatrz" poza +/- limit, **zanim** wozek dojedzie do krancowki -
 ruch powrotny do srodka jest dozwolony. Soft-limit NIE jest faultem (krancowka
 LIMIT to osobny, zatrzaskowy fault).
@@ -110,13 +110,14 @@ Komendy PC -> ESP32:
 | 0x08 | SET_OUTPUT_MODE | uint8 (0=binary, 1=debug) |
 
 Odpowiedzi/telemetria ESP32 -> PC: `PONG 0x81`, `ACK 0x82`, `NACK 0x83`,
-`TELEMETRY 0x84`. Telemetria leci okresowo **~250 Hz**, payload
-(packed, LE, 28 B):
+`TELEMETRY 0x84`. Telemetria binarna leci okresowo **250 Hz**, payload
+(packed, LE, 29 B):
 
 ```
 uint64 timestamp_us | int32 encoder_count | int32 position_steps |
 float applied_speed_hz | uint32 applied_acc | uint8 limit_state |
-uint8 fault_state | uint8 drive_enabled | uint8 soft_limit_state
+uint8 fault_state | uint8 drive_enabled | uint8 soft_limit_state |
+uint8 start_state
 ```
 
 ## Build / flash

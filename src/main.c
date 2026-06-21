@@ -250,7 +250,7 @@ static void io_task(void *arg)
             xQueueSend(s_cmd_queue, &c, 0);
         }
 
-        // Telemetria okresowa: binarna ~100 Hz, tekstowa ~10 Hz.
+        // Telemetria okresowa: binarna 250 Hz, tekstowa 10 Hz.
         const int64_t period = (s_out_mode == OUT_BINARY)
                                    ? TELEMETRY_PERIOD_US
                                    : TELEMETRY_DEBUG_PERIOD_US;
